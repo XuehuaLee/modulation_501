@@ -1,0 +1,163 @@
+module judge_by_window(clk,ce,lpf_out,judge_position_out,judge_position_out_nd,test0,test1,test2);
+input clk;
+input ce;
+input signed [26:0] lpf_out;
+output [15:0] judge_position_out;
+output judge_position_out_nd;
+
+output [31:0]test0,test1,test2;
+
+reg [15:0] judge_position_out = 0;
+reg judge_position_out_nd = 0;
+reg [15:0] window0_cnt = 16'd0;
+reg [15:0] window1_cnt = 16'd32768;// count to 65536 earlier
+
+always @(posedge clk)begin
+    window0_cnt <= window0_cnt + 1'b1;
+	  window1_cnt <= window1_cnt + 1'b1;
+end
+
+reg signed[26:0] window0_max_tmp = 27'd0;
+reg signed[26:0] window1_max_tmp = 27'd0;
+
+reg [15:0] window0_max_position = 16'd0;//window0
+reg [15:0] window0_max_position0 = 16'd0;
+reg [15:0] window0_max_position1 = 16'd0; 
+wire [16:0] max_distance_window0;
+reg [2:0] sync_cnt0 = 3'b0;
+reg [15:0] judge_max_position0 =16'd0;
+reg [15:0] judge_cnt_after_sync0 = 16'd0;
+reg signed [26:0] judge_max0 = 27'd0;
+
+reg [15:0] window1_max_position = 16'd0;//window1
+reg [15:0] window1_max_position0 = 16'd0;
+reg [15:0] window1_max_position1 = 16'd0;
+wire [16:0] max_distance_window1;
+reg [2:0] sync_cnt1 = 3'b0;
+reg [15:0] judge_max_position1 = 16'd0;
+reg [15:0] judge_cnt_after_sync1 = 16'd0;
+reg signed [26:0] judge_max1 = 27'd0;
+
+reg signed [26:0] judge_max = 27'd0;//judge
+reg [15:0] judge_max_position = 0;
+
+reg [1:0] judge_windows = 2'd3;//whitch window
+
+reg need_sync0 = 1'b1;//find sync
+reg need_sync1 = 1'b1;
+reg [15:0] judge_cnt_after_sync = 16'd0;
+
+assign max_distance_window0 = 17'd65536 - {1'b0,window0_max_position1} + {1'b0,window0_max_position0};
+assign max_distance_window1 = 17'd65536 - {1'b0,window1_max_position1} + {1'b0,window1_max_position0};
+
+always @(posedge clk)begin
+  if(window0_cnt == 16'd0)//refresh data
+    window0_max_tmp <= lpf_out;
+  else if(need_sync0)begin
+    if(lpf_out > window0_max_tmp)begin
+      window0_max_tmp <= lpf_out;
+      window0_max_position0 <= window0_cnt;
+    end 
+    if(window0_cnt == 16'd65535)begin
+      if((max_distance_window0 > 65528) || (max_distance_window0 < 65544))begin
+        sync_cnt0 <= sync_cnt0 + 1'b1;
+        if(sync_cnt0 == 3'd3)begin
+         sync_cnt0 <= 3'd0;
+         judge_cnt_after_sync0 <= 65535 - window0_max_position0 + 1 +8;
+         need_sync0 <= 1'b0; 
+         judge_max0 <= window0_max_tmp;
+         
+         if((window0_max_position0 > 60 && window0_max_position0 < 65475) && judge_windows != 1)begin
+          judge_windows <= 0;
+          judge_max_position <= 8;
+         end
+        end
+      end
+      else
+        sync_cnt0 <= 3'd0;
+        window0_max_position1 <= window0_max_position0;
+    end
+  end 
+  
+  if(window1_cnt == 16'd0) //refresh data
+		window1_max_temp <= lpf_out;
+	else if(need_sync1) begin		//find sync header
+		if(lpf_out > window1_max_temp) begin
+			window1_max_temp <= lpf_out;
+			window1_max_position0 <= window1_cnt;
+		end
+		if(window1_cnt == 16'd65535) begin
+		
+			if((max_distance_window1 > 65528) || (max_distance_window1 < 65544)) begin
+				sync_cnt1 <= sync_cnt1 + 1'b1;
+				if(sync_cnt1 == 3'd3) begin
+					sync_cnt1 <= 3'd0;
+					need_sync1 <= 1'b0;
+					judge_cnt_after_sync1 <= 65535 - window1_max_position0 + 1 + 8;
+								
+					judge_max1 <= window1_max_temp;
+					
+					if((window1_max_position0 > 60 && window1_max_position0 < 65475) && judge_windows != 0) begin
+						judge_windows <= 1;
+						judge_max_position <= 16'd8;
+					end
+				end
+			end
+			else
+				sync_cnt1 <= 3'd0;
+					
+			window1_max_position1 <= window1_max_position0;
+		end
+	end
+  
+  if(judge_windows == 0)begin
+     if(judge_cnt_after_sync0 == 65535)begin
+        judge_cnt_after_sync0 <= 0;
+        judge_max <= 0;
+        judge_position_out <= judge_max_position;
+        judge_position_out_nd <= 1;
+     end
+     else begin
+        judge_cnt_after_sync0 <= judge_cnt_after_sync0 + 1'b1;
+        if(judge_max < lpf_out) begin
+            judge_max <= lpf_out;
+            judge_max_position <= judge_cnt_after_sync0;
+			  end        
+     end
+  end
+  	else if(judge_windows == 1) begin
+		if(judge_cnt_after_sync1 == 65535) begin
+			judge_cnt_after_sync1 <= 0;
+			judge_max <= 0;
+			judge_position_out <= judge_max_position;
+			judge_position_out_nd <= 1;
+		end
+		else begin
+			judge_cnt_after_sync1 <= judge_cnt_after_sync1 + 1'b1;
+			if(judge_max < lpf_out) begin
+				judge_max <= lpf_out;
+				judge_max_position <= judge_cnt_after_sync1;
+			end
+		end
+	end
+  
+  if(judge_position_out_nd)
+		judge_position_out_nd <= 0;    
+end
+
+assign test0 = {need_sync1,need_sync0,1'b0,judge_windows,sync_cnt0[2:0]};
+assign test1 = judge_cnt_after_sync1;
+assign test2 = judge_max_position;
+
+
+endmodule
+  
+  
+  
+  
+  
+    
+    
+
+
+
